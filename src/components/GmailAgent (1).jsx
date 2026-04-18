@@ -1,7 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 
-// ── API helpers (calls our own Next.js routes instead of Anthropic directly) ──
 async function callClaude(userPrompt, systemPrompt) {
   const res = await fetch("/api/claude", {
     method: "POST",
@@ -12,11 +11,12 @@ async function callClaude(userPrompt, systemPrompt) {
   return data.content?.[0]?.text || "";
 }
 
-async function sendGmailReal(to, subject, body, notificationEmail) {
+// FIX 1: accessToken ajouté
+async function sendGmailReal(to, subject, body, notificationEmail, accessToken) {
   const res = await fetch("/api/gmail", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ to, subject, body, notificationEmail }),
+    body: JSON.stringify({ to, subject, body, notificationEmail, accessToken }),
   });
   return res.json();
 }
@@ -35,7 +35,6 @@ async function addCalendarEvent(title, dateStr, attendeeEmail, description) {
   return res.json();
 }
 
-// ── NAYRO DESIGN TOKENS ──
 const N = {
   bg: "#0A1515", bgCard: "#0F1C1C", bgCardHover: "#142020",
   border: "#1A2E2E", borderLight: "#243D3D",
@@ -78,13 +77,6 @@ const DEMO_CONTACTS = [
   { id: 5, prenom: "Julie", nom: "Moreau", email: "julie.moreau@prospect.fr", company: "ProspectY", category: "relance" },
 ];
 
-const DEMO_INBOX = [
-  { id: 1, from: "sophie.martin@acme.fr", fromName: "Sophie Martin", subject: "Re: Proposition de collaboration – Acme Corp", body: "Bonjour,\n\nMerci pour votre message. Votre offre m'intéresse beaucoup. Seriez-vous disponible pour un appel cette semaine, peut-être jeudi à 14h ?\n\nCordialement,\nSophie Martin", date: "2025-04-15 09:23", read: false, replied: false, calendarDetected: true },
-  { id: 2, from: "lucas.bernard@techco.fr", fromName: "Lucas Bernard", subject: "Re: Proposition de collaboration – TechCo", body: "Bonjour,\n\nJ'ai bien reçu votre proposition. Pouvez-vous m'envoyer une documentation plus détaillée sur vos robots ? Nous cherchons une solution pour notre entrepôt.\n\nMerci,\nLucas Bernard", date: "2025-04-14 16:45", read: false, replied: false, calendarDetected: false },
-  { id: 3, from: "marie.dupont@startup.io", fromName: "Marie Dupont", subject: "Question partenariat revendeur", body: "Bonjour,\n\nNous sommes une startup dans l'intégration de solutions tech. Avez-vous un programme de partenariat revendeur ? Je serais disponible lundi matin ou mardi après-midi pour en discuter.\n\nBonne journée,\nMarie Dupont", date: "2025-04-13 11:10", read: true, replied: false, calendarDetected: true },
-];
-
-// Shared small components
 const Card = ({ children, style }) => <div style={{ background: N.bgCard, border: `1px solid ${N.border}`, borderRadius: 16, padding: 20, ...style }}>{children}</div>;
 const Label = ({ children }) => <div style={{ fontFamily: N.font, fontSize: 10, letterSpacing: 2.5, color: N.textMuted, textTransform: "uppercase", marginBottom: 10, fontWeight: 600 }}>{children}</div>;
 const NInput = ({ style, ...p }) => <input {...p} style={{ width: "100%", padding: "9px 12px", border: `1px solid ${N.border}`, borderRadius: 9, fontSize: 13, background: N.bg, color: N.textPrimary, outline: "none", fontFamily: N.font, ...style }} />;
@@ -103,11 +95,7 @@ function SignaturePreview({ sig }) {
       {sig.email && <div style={{ color: "#444", fontSize: 12 }}>✉️ {sig.email}</div>}
       {sig.website && <div style={{ color: sig.primaryColor, fontSize: 12 }}>🌐 {sig.website}</div>}
       {sig.linkedin && <div style={{ color: "#0077B5", fontSize: 12 }}>🔗 {sig.linkedin}</div>}
-      {sig.showLogo && (
-        <div style={{ marginTop: 8 }}>
-          <img src="https://nayro.eu/images/logo.svg" alt="Nayro" style={{ height: 20 }} onError={e => e.target.style.display = "none"} />
-        </div>
-      )}
+      {sig.showLogo && <div style={{ marginTop: 8 }}><img src="https://nayro.eu/images/logo.svg" alt="Nayro" style={{ height: 20 }} onError={e => e.target.style.display = "none"} /></div>}
     </div>
   );
 }
@@ -140,7 +128,7 @@ export default function GmailAgent({ session, onSignOut }) {
   const [sendProgress, setSendProgress] = useState(0);
   const [showAddContact, setShowAddContact] = useState(false);
   const [newContact, setNewContact] = useState({ prenom: "", nom: "", email: "", company: "", category: "commercial" });
-  const [inbox, setInbox] = useState(DEMO_INBOX);
+  const [inbox, setInbox] = useState([]);
   const [selectedInboxMsg, setSelectedInboxMsg] = useState(null);
   const [aiReply, setAiReply] = useState(null);
   const [generatingReply, setGeneratingReply] = useState(false);
@@ -153,28 +141,24 @@ export default function GmailAgent({ session, onSignOut }) {
   const fileInputRef = useRef();
 
   useEffect(() => {
-    fetch("/mnt/user-data/uploads/IMG_2465.jpeg")
+    fetch("https://nayro.eu/images/logo.svg")
       .then(r => r.blob()).then(b => { const fr = new FileReader(); fr.onload = e => setLogoSrc(e.target.result); fr.readAsDataURL(b); }).catch(() => {});
   }, []);
 
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
-
   const activeSig = signatures.find(s => s.id === selectedSigId) || signatures[0];
   const filteredContacts = contacts.filter(c => c.category === selectedCategory);
-
   const toggleContact = (id) => setSelectedContacts(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   const selectAllByCategory = () => {
     const ids = filteredContacts.map(c => c.id);
     const all = ids.every(id => selectedContacts.includes(id));
     setSelectedContacts(all ? prev => prev.filter(id => !ids.includes(id)) : prev => [...new Set([...prev, ...ids])]);
   };
-
   const addNotification = (msg, type = "info") => {
     const n = { id: Date.now(), msg, type, date: new Date().toLocaleString("fr-FR") };
     setNotifications(prev => [n, ...prev]);
   };
 
-  // ── Generate single email ──
   const generateSingle = async () => {
     if (!context.trim()) return showToast("Décrivez le contexte.", "error");
     if (!senderEmail.trim()) return showToast("Indiquez votre adresse Gmail.", "error");
@@ -182,11 +166,7 @@ export default function GmailAgent({ session, onSignOut }) {
     try {
       const tpl = templates[selectedCategory];
       const sigText = activeSig ? `\n\nSignature: ${activeSig.fullName}, ${activeSig.title}, ${activeSig.company}` : "";
-      const prompt = `Catégorie: ${CATEGORIES.find(c => c.id === selectedCategory)?.label}
-Template: ${tpl?.body || ""}
-Contexte: ${context}
-Expéditeur: ${senderEmail}${sigText}
-Retourne UNIQUEMENT un JSON {"subject":"...","body":"..."}. Le corps ne doit PAS inclure la signature. Pas de markdown.`;
+      const prompt = `Catégorie: ${CATEGORIES.find(c => c.id === selectedCategory)?.label}\nTemplate: ${tpl?.body || ""}\nContexte: ${context}\nExpéditeur: ${senderEmail}${sigText}\nRetourne UNIQUEMENT un JSON {"subject":"...","body":"..."}. Le corps ne doit PAS inclure la signature. Pas de markdown.`;
       const text = await callClaude(prompt);
       const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
       setSubject(parsed.subject); setEmailBody(parsed.body);
@@ -195,11 +175,11 @@ Retourne UNIQUEMENT un JSON {"subject":"...","body":"..."}. Le corps ne doit PAS
     setLoading(false);
   };
 
-  // ── Send single ──
+  // FIX 2: session.accessToken passé
   const sendSingle = async () => {
     if (!emailBody) return showToast("Générez d'abord un email.", "error");
     const fullBody = buildEmailWithSignature(emailBody, activeSig);
-    const result = await sendGmailReal(senderEmail, subject, fullBody, session?.user?.email);
+    const result = await sendGmailReal(senderEmail, subject, fullBody, session?.user?.email, session?.accessToken);
     const status = result.success ? "Envoyé" : "Erreur";
     const entry = { id: Date.now(), date: new Date().toLocaleString("fr-FR"), to: senderEmail, subject, category: selectedCategory, status, bulk: false, sig: activeSig?.name };
     setHistory(prev => [entry, ...prev]);
@@ -207,7 +187,6 @@ Retourne UNIQUEMENT un JSON {"subject":"...","body":"..."}. Le corps ne doit PAS
     showToast(result.success ? "Email envoyé !" : `Erreur: ${result.error}`);
   };
 
-  // ── Bulk send ──
   const generateAndSendBulk = async () => {
     if (!context.trim()) return showToast("Décrivez le contexte.", "error");
     if (!senderEmail.trim()) return showToast("Indiquez votre adresse Gmail.", "error");
@@ -221,18 +200,14 @@ Retourne UNIQUEMENT un JSON {"subject":"...","body":"..."}. Le corps ne doit PAS
       try {
         const tpl = templates[queue[i].contact.category] || templates[selectedCategory];
         const sig = activeSig;
-        const prompt = `Catégorie: ${CATEGORIES.find(c => c.id === (queue[i].contact.category || selectedCategory))?.label}
-Template: ${tpl?.body || ""}
-Contexte: ${context}
-Destinataire: ${queue[i].contact.prenom} ${queue[i].contact.nom}, entreprise: ${queue[i].contact.company || "inconnue"}
-Expéditeur: ${sig?.fullName || senderEmail}, ${sig?.title || ""}, ${sig?.company || "Nayro"}
-Personnalise l'email. Le corps ne doit PAS inclure la signature. UNIQUEMENT JSON {"subject":"...","body":"..."}. Pas de markdown.`;
+        const prompt = `Catégorie: ${CATEGORIES.find(c => c.id === (queue[i].contact.category || selectedCategory))?.label}\nTemplate: ${tpl?.body || ""}\nContexte: ${context}\nDestinataire: ${queue[i].contact.prenom} ${queue[i].contact.nom}, entreprise: ${queue[i].contact.company || "inconnue"}\nExpéditeur: ${sig?.fullName || senderEmail}, ${sig?.title || ""}, ${sig?.company || "Nayro"}\nPersonnalise l'email. Le corps ne doit PAS inclure la signature. UNIQUEMENT JSON {"subject":"...","body":"..."}. Pas de markdown.`;
         const text = await callClaude(prompt);
         const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
         queue[i] = { ...queue[i], status: "sent", subject: parsed.subject, body: parsed.body };
         const fullBody = buildEmailWithSignature(parsed.body, sig);
-        await sendGmailReal(queue[i].contact.email, parsed.subject, fullBody, session?.user?.email);
-        setHistory(prev => [{ id: Date.now() + i, date: new Date().toLocaleString("fr-FR"), to: queue[i].contact.email, toName: `${queue[i].contact.prenom} ${queue[i].contact.nom}`, subject: parsed.subject, category: queue[i].contact.category || selectedCategory, status: "Simulé", bulk: true, sig: sig?.name }, ...prev]);
+        // FIX 3: session.accessToken passé dans bulk
+        await sendGmailReal(queue[i].contact.email, parsed.subject, fullBody, session?.user?.email, session?.accessToken);
+        setHistory(prev => [{ id: Date.now() + i, date: new Date().toLocaleString("fr-FR"), to: queue[i].contact.email, toName: `${queue[i].contact.prenom} ${queue[i].contact.nom}`, subject: parsed.subject, category: queue[i].contact.category || selectedCategory, status: "Envoyé", bulk: true, sig: sig?.name }, ...prev]);
       } catch { queue[i] = { ...queue[i], status: "error", error: "Échec" }; }
       setSendQueue([...queue]); setSendProgress(Math.round(((i + 1) / queue.length) * 100));
       await new Promise(r => setTimeout(r, 500));
@@ -243,53 +218,34 @@ Personnalise l'email. Le corps ne doit PAS inclure la signature. UNIQUEMENT JSON
     showToast(`${sent}/${queue.length} emails envoyés !`);
   };
 
-  // ── Generate AI reply for inbox message ──
   const generateAiReply = async (msg) => {
     setSelectedInboxMsg(msg); setAiReply(null); setGeneratingReply(true);
     try {
       const sig = activeSig;
-      const prompt = `Tu es un assistant IA professionnel qui répond à des emails reçus pour Nayro (robotique de service premium).
-
-Email reçu de ${msg.fromName} (${msg.from}):
-Sujet: ${msg.subject}
-Corps: ${msg.body}
-
-Analyse cet email et:
-1. Détermine s'il contient une demande de rendez-vous (retourne calendarRequest: true/false)
-2. Si oui, identifie la date/heure proposée (dateProposed: "ex: jeudi 14h" ou null)
-3. Rédige une réponse professionnelle en français, adaptée au contexte
-4. L'expéditeur de la réponse sera: ${sig?.fullName || "Nayro"}, ${sig?.title || ""}, ${sig?.company || "Nayro"}
-5. Ne pas inclure la signature dans le body (elle est ajoutée automatiquement)
-
-Retourne UNIQUEMENT un JSON:
-{"subject":"...","body":"...","calendarRequest":true/false,"dateProposed":"..." ou null,"suggestedDate":"YYYY-MM-DDThh:mm" ou null,"summary":"résumé en 1 ligne de l'email reçu"}
-Pas de markdown.`;
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1200, messages: [{ role: "user", content: prompt }] }) });
-      const data = await res.json();
-      const parsed = JSON.parse((data.content?.[0]?.text || "").replace(/```json|```/g, "").trim());
+      const prompt = `Tu es un assistant IA professionnel qui répond à des emails reçus pour Nayro.\nEmail reçu de ${msg.fromName} (${msg.from}):\nSujet: ${msg.subject}\nCorps: ${msg.body}\nRédige une réponse professionnelle. L'expéditeur: ${sig?.fullName || "Nayro"}.\nRetourne UNIQUEMENT un JSON: {"subject":"...","body":"...","calendarRequest":true/false,"dateProposed":"..." ou null,"suggestedDate":"YYYY-MM-DDThh:mm" ou null,"summary":"résumé en 1 ligne"}\nPas de markdown.`;
+      const text = await callClaude(prompt);
+      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
       setAiReply(parsed);
       if (parsed.calendarRequest && parsed.suggestedDate) setPendingCalEvent({ title: `RDV avec ${msg.fromName}`, date: parsed.suggestedDate, email: msg.from, name: msg.fromName });
     } catch { showToast("Erreur lors de l'analyse de l'email.", "error"); }
     setGeneratingReply(false);
   };
 
-  // ── Validate and send reply ──
-  const validateAndSendReply = () => {
+  const validateAndSendReply = async () => {
     if (!aiReply) return;
     const fullBody = buildEmailWithSignature(aiReply.body, activeSig);
+    await sendGmailReal(selectedInboxMsg.from, aiReply.subject, fullBody, session?.user?.email, session?.accessToken);
     setInbox(prev => prev.map(m => m.id === selectedInboxMsg.id ? { ...m, replied: true, read: true } : m));
     setHistory(prev => [{ id: Date.now(), date: new Date().toLocaleString("fr-FR"), to: selectedInboxMsg.from, toName: selectedInboxMsg.fromName, subject: aiReply.subject, category: "support", status: "Envoyé", bulk: false, sig: activeSig?.name, isReply: true }, ...prev]);
     addNotification(`Réponse envoyée à ${selectedInboxMsg.fromName} : "${aiReply.subject}"`, "reply");
     showToast(`Réponse envoyée à ${selectedInboxMsg.fromName} !`);
-    if (pendingCalEvent) { setShowCalendar(true); }
+    if (pendingCalEvent) setShowCalendar(true);
     setSelectedInboxMsg(null); setAiReply(null); setPendingCalEvent(null);
   };
 
-  // ── Add to calendar ──
   const addToCalendar = (evt) => {
     const d = new Date(evt.date);
-    const hours = d.getHours();
-    const day = d.getDay();
+    const hours = d.getHours(); const day = d.getDay();
     let valid = day >= 1 && day <= 5 && hours >= 9 && hours < 18;
     if (!valid) {
       if (hours < 9) d.setHours(9, 0);
@@ -299,7 +255,7 @@ Pas de markdown.`;
     }
     const newEvt = { ...evt, date: d.toISOString(), id: Date.now(), adjustedFromOriginal: !valid };
     setCalendarEvents(prev => [...prev, newEvt]);
-    addNotification(`📅 RDV ajouté au calendrier : "${evt.title}" le ${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}${!valid ? " (ajusté aux horaires disponibles)" : ""}`, "calendar");
+    addNotification(`📅 RDV : "${evt.title}" le ${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}${!valid ? " (ajusté)" : ""}`, "calendar");
     showToast("RDV ajouté au calendrier !");
     setShowCalendar(false); setPendingCalEvent(null);
   };
@@ -332,20 +288,18 @@ Pas de markdown.`;
 
       {toast && <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: toast.type === "error" ? N.errorBg : "rgba(77,217,232,0.12)", border: `1px solid ${toast.type === "error" ? N.error : N.accent}`, color: toast.type === "error" ? N.error : N.accent, padding: "12px 20px", borderRadius: 12, fontFamily: N.font, fontSize: 13, fontWeight: 600, backdropFilter: "blur(12px)", animation: "slideIn .3s ease" }}>{toast.msg}</div>}
 
-      {/* Calendar approval modal */}
       {showCalendar && pendingCalEvent && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Card style={{ maxWidth: 440, width: "90%", padding: 28 }}>
             <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>📅 Ajouter au calendrier</div>
-            <div style={{ fontSize: 12, color: N.textMuted, marginBottom: 20 }}>Une demande de rendez-vous a été détectée dans cet email.</div>
+            <div style={{ fontSize: 12, color: N.textMuted, marginBottom: 20 }}>Une demande de rendez-vous a été détectée.</div>
             <div style={{ background: N.bg, borderRadius: 10, padding: 16, marginBottom: 18, border: `1px solid ${N.border}` }}>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>{pendingCalEvent.title}</div>
               <div style={{ fontSize: 12, color: N.textSecondary }}>Avec : {pendingCalEvent.email}</div>
-              <div style={{ fontSize: 12, color: N.textSecondary, marginTop: 4 }}>Date proposée : {pendingCalEvent.date ? new Date(pendingCalEvent.date).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "À déterminer"}</div>
-              <div style={{ fontSize: 11, color: N.warning, marginTop: 8 }}>⚡ Horaires disponibles : Lun–Ven, 9h–18h. Le créneau sera ajusté automatiquement si nécessaire.</div>
+              <div style={{ fontSize: 11, color: N.warning, marginTop: 8 }}>⚡ Horaires : Lun–Ven, 9h–18h. Ajusté automatiquement si nécessaire.</div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <BtnP onClick={() => addToCalendar(pendingCalEvent)} style={{ flex: 1 }}>✓ Ajouter au calendrier</BtnP>
+              <BtnP onClick={() => addToCalendar(pendingCalEvent)} style={{ flex: 1 }}>✓ Ajouter</BtnP>
               <BtnO onClick={() => { setShowCalendar(false); setPendingCalEvent(null); }} style={{ flex: 1 }}>Ignorer</BtnO>
             </div>
           </Card>
@@ -373,7 +327,7 @@ Pas de markdown.`;
         input[type=color]{border:none;padding:2px;cursor:pointer;border-radius:6px;height:32px;width:40px}
       `}</style>
 
-      {/* ── HEADER ── */}
+      {/* HEADER */}
       <div style={{ background: "rgba(10,21,21,.97)", borderBottom: `1px solid ${N.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100, backdropFilter: "blur(24px)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {logoSrc ? <img src={logoSrc} alt="Nayro" style={{ height: 32, width: 32, borderRadius: 7, objectFit: "cover" }} /> : <div style={{ height: 32, width: 32, borderRadius: 7, background: N.accentLight, display: "flex", alignItems: "center", justifyContent: "center", color: N.accent, fontWeight: 800 }}>N</div>}
@@ -397,16 +351,16 @@ Pas de markdown.`;
               {notifCount > 0 && <span style={{ background: N.accent, color: N.bg, borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{notifCount}</span>}
             </div>
           )}
-          {senderEmail && <div style={{ display: "flex", alignItems: "center", gap: 7, background: N.bgCard, border: `1px solid ${N.border}`, borderRadius: 18, padding: "5px 12px" }}>
+          {session?.user?.email && <div style={{ display: "flex", alignItems: "center", gap: 7, background: N.bgCard, border: `1px solid ${N.border}`, borderRadius: 18, padding: "5px 12px" }}>
             <div style={{ width: 7, height: 7, borderRadius: "50%", background: N.success, boxShadow: `0 0 6px ${N.success}` }} />
-            <span style={{ fontSize: 11, color: N.textSecondary }}>{senderEmail}</span>
+            <span style={{ fontSize: 11, color: N.textSecondary }}>{session.user.email}</span>
           </div>}
         </div>
       </div>
 
       <div style={{ maxWidth: 1080, margin: "0 auto", padding: "24px 18px" }}>
 
-        {/* ══ COMPOSE ══ */}
+        {/* COMPOSE */}
         {screen === "compose" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -424,7 +378,7 @@ Pas de markdown.`;
                   ))}
                 </div>
                 {activeSig && <div style={{ background: N.bg, borderRadius: 10, padding: 14, border: `1px solid ${N.border}` }}><SignaturePreview sig={activeSig} /></div>}
-                <button onClick={() => { setScreen("signatures"); }} style={{ marginTop: 8, fontFamily: N.font, fontSize: 11, color: N.accent, background: "none", border: "none", cursor: "pointer" }}>+ Gérer les signatures →</button>
+                <button onClick={() => setScreen("signatures")} style={{ marginTop: 8, fontFamily: N.font, fontSize: 11, color: N.accent, background: "none", border: "none", cursor: "pointer" }}>+ Gérer les signatures →</button>
               </Card>
               <Card>
                 <Label>Mode d'envoi</Label>
@@ -448,7 +402,7 @@ Pas de markdown.`;
               </Card>
               <Card>
                 <Label>Contexte{bulkMode && <span style={{ color: N.textMuted, fontWeight: 400 }}> — commun à tous</span>}</Label>
-                <NTextarea value={context} onChange={e => setContext(e.target.value)} placeholder="Ex : Présenter le LuckiBot Pro à ce prospect suite à notre appel de la semaine dernière…" rows={4} />
+                <NTextarea value={context} onChange={e => setContext(e.target.value)} placeholder="Ex : Présenter le LuckiBot Pro à ce prospect…" rows={4} />
                 {!bulkMode && <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <BtnO className="btn-o" onClick={() => { const t = templates[selectedCategory]; if (t) { setSubject(t.subject); setEmailBody(t.body); } }} style={{ flex: 1 }}>📋 Template</BtnO>
                   <BtnP onClick={generateSingle} disabled={loading} style={{ flex: 2 }}>{loading ? <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span> : "✦ Générer avec l'IA"}</BtnP>
@@ -522,12 +476,13 @@ Pas de markdown.`;
           </div>
         )}
 
-        {/* ══ INBOX ══ */}
+        {/* INBOX */}
         {screen === "inbox" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
               <div><div style={{ fontSize: 20, fontWeight: 700 }}>Boîte de réception</div><div style={{ fontSize: 11, color: N.textMuted, marginTop: 2 }}>{unreadCount} non lu(s) — L'IA analyse et propose des réponses</div></div>
             </div>
+            {inbox.length === 0 && <Card><div style={{ textAlign: "center", padding: "40px", fontSize: 13, color: N.textMuted }}>Aucun email dans la boîte de réception</div></Card>}
             <div style={{ display: "grid", gridTemplateColumns: selectedInboxMsg ? "1fr 1fr" : "1fr", gap: 16 }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {inbox.map(msg => (
@@ -549,7 +504,6 @@ Pas de markdown.`;
                   </div>
                 ))}
               </div>
-
               {selectedInboxMsg && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "fadeIn .3s ease" }}>
                   <Card>
@@ -561,14 +515,12 @@ Pas de markdown.`;
                       <BtnP onClick={() => generateAiReply(selectedInboxMsg)} style={{ marginTop: 14, width: "100%" }}>✦ Générer une réponse IA</BtnP>
                     )}
                   </Card>
-
-                  {generatingReply && <Card><div style={{ textAlign: "center", padding: "24px" }}><div style={{ width: 30, height: 30, border: `3px solid ${N.border}`, borderTopColor: N.accent, borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 10px" }} /><div style={{ fontSize: 12, color: N.textMuted }}>Analyse et rédaction en cours…</div></div></Card>}
-
+                  {generatingReply && <Card><div style={{ textAlign: "center", padding: "24px" }}><div style={{ width: 30, height: 30, border: `3px solid ${N.border}`, borderTopColor: N.accent, borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 10px" }} /><div style={{ fontSize: 12, color: N.textMuted }}>Analyse en cours…</div></div></Card>}
                   {aiReply && !generatingReply && (
                     <Card style={{ animation: "fadeIn .3s ease" }}>
                       <Label>Réponse proposée par l'IA</Label>
                       {aiReply.summary && <div style={{ background: N.accentLight, border: `1px solid ${N.accent}22`, borderRadius: 9, padding: "8px 12px", marginBottom: 12, fontSize: 11, color: N.accent }}>📋 Résumé : {aiReply.summary}</div>}
-                      {aiReply.calendarRequest && <div style={{ background: N.warningBg, border: `1px solid ${N.warning}33`, borderRadius: 9, padding: "8px 12px", marginBottom: 12, fontSize: 11, color: N.warning }}>📅 Demande de RDV détectée : {aiReply.dateProposed || "date à confirmer"} → Sera ajouté à votre calendrier</div>}
+                      {aiReply.calendarRequest && <div style={{ background: N.warningBg, border: `1px solid ${N.warning}33`, borderRadius: 9, padding: "8px 12px", marginBottom: 12, fontSize: 11, color: N.warning }}>📅 Demande de RDV : {aiReply.dateProposed || "date à confirmer"}</div>}
                       <div style={{ marginBottom: 10 }}>
                         <div style={{ fontSize: 10, color: N.textMuted, letterSpacing: 2, textTransform: "uppercase", marginBottom: 4 }}>Objet</div>
                         <NInput value={aiReply.subject} onChange={e => setAiReply({ ...aiReply, subject: e.target.value })} />
@@ -591,7 +543,7 @@ Pas de markdown.`;
           </div>
         )}
 
-        {/* ══ SIGNATURES ══ */}
+        {/* SIGNATURES */}
         {screen === "signatures" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -607,10 +559,8 @@ Pas de markdown.`;
                   </div>
                 ))}
               </div>
-
               {editingSig && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                  {/* Editor */}
                   <Card>
                     <Label>Éditeur</Label>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -636,7 +586,6 @@ Pas de markdown.`;
                       </div>
                     </div>
                   </Card>
-                  {/* Live preview */}
                   <Card>
                     <Label>Aperçu en temps réel</Label>
                     <div style={{ background: "#FFFFFF", borderRadius: 10, padding: 20, minHeight: 200 }}>
@@ -644,7 +593,7 @@ Pas de markdown.`;
                       <SignaturePreview sig={editingSig} />
                     </div>
                     <div style={{ marginTop: 12, padding: "10px 12px", background: N.accentLight, borderRadius: 9, border: `1px solid ${N.accent}22` }}>
-                      <div style={{ fontSize: 11, color: N.accent }}>✦ Cette signature sera automatiquement ajoutée à tous les emails envoyés avec ce profil.</div>
+                      <div style={{ fontSize: 11, color: N.accent }}>✦ Cette signature sera automatiquement ajoutée à tous les emails.</div>
                     </div>
                   </Card>
                 </div>
@@ -653,7 +602,7 @@ Pas de markdown.`;
           </div>
         )}
 
-        {/* ══ CONTACTS ══ */}
+        {/* CONTACTS */}
         {screen === "contacts" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -691,7 +640,7 @@ Pas de markdown.`;
           </div>
         )}
 
-        {/* ══ TEMPLATES ══ */}
+        {/* TEMPLATES */}
         {screen === "templates" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -717,38 +666,35 @@ Pas de markdown.`;
           </div>
         )}
 
-        {/* ══ CALENDAR ══ */}
+        {/* CALENDAR */}
         {screen === "calendar" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
               <div><div style={{ fontSize: 20, fontWeight: 700 }}>Calendrier</div><div style={{ fontSize: 11, color: N.textMuted, marginTop: 2 }}>Disponibilités : Lun–Ven, 9h–18h</div></div>
             </div>
             {calendarEvents.length === 0
-              ? <Card><div style={{ textAlign: "center", padding: "50px 20px" }}><div style={{ fontSize: 40, marginBottom: 12, opacity: .3 }}>📅</div><div style={{ fontSize: 13, color: N.textMuted }}>Aucun rendez-vous planifié</div><div style={{ fontSize: 11, color: N.textMuted, marginTop: 6 }}>Les RDV détectés dans les emails seront ajoutés ici automatiquement</div></div></Card>
+              ? <Card><div style={{ textAlign: "center", padding: "50px 20px" }}><div style={{ fontSize: 40, marginBottom: 12, opacity: .3 }}>📅</div><div style={{ fontSize: 13, color: N.textMuted }}>Aucun rendez-vous planifié</div></div></Card>
               : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {calendarEvents.map(evt => {
-                    const d = new Date(evt.date);
-                    return <Card key={evt.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                        <div style={{ background: N.accentLight, border: `1px solid ${N.accent}33`, borderRadius: 10, padding: "10px 14px", textAlign: "center", minWidth: 60 }}>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: N.accent }}>{d.getDate()}</div>
-                          <div style={{ fontSize: 10, color: N.textSecondary, textTransform: "uppercase" }}>{d.toLocaleDateString("fr-FR", { month: "short" })}</div>
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{evt.title}</div>
-                          <div style={{ fontSize: 12, color: N.textSecondary }}>{evt.email} · {d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</div>
-                          {evt.adjustedFromOriginal && <div style={{ fontSize: 11, color: N.warning, marginTop: 3 }}>⚡ Créneau ajusté automatiquement (hors horaires disponibles)</div>}
-                        </div>
+                  {calendarEvents.map(evt => { const d = new Date(evt.date); return <Card key={evt.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                      <div style={{ background: N.accentLight, border: `1px solid ${N.accent}33`, borderRadius: 10, padding: "10px 14px", textAlign: "center", minWidth: 60 }}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: N.accent }}>{d.getDate()}</div>
+                        <div style={{ fontSize: 10, color: N.textSecondary, textTransform: "uppercase" }}>{d.toLocaleDateString("fr-FR", { month: "short" })}</div>
                       </div>
-                      <Badge label={d.toLocaleDateString("fr-FR", { weekday: "long" })} color={N.accent} bg={N.accentLight} />
-                    </Card>;
-                  })}
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{evt.title}</div>
+                        <div style={{ fontSize: 12, color: N.textSecondary }}>{evt.email} · {d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</div>
+                        {evt.adjustedFromOriginal && <div style={{ fontSize: 11, color: N.warning, marginTop: 3 }}>⚡ Créneau ajusté automatiquement</div>}
+                      </div>
+                    </div>
+                    <Badge label={d.toLocaleDateString("fr-FR", { weekday: "long" })} color={N.accent} bg={N.accentLight} />
+                  </Card>; })}
                 </div>
             }
           </div>
         )}
 
-        {/* ══ HISTORY ══ */}
+        {/* HISTORY */}
         {screen === "history" && (
           <div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
