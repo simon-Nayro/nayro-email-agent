@@ -1,0 +1,13 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0A1515; color: #E8F8F8; font-family: 'Inter', sans-serif; }
+textarea, input, select { font-family: 'Inter', sans-serif; color: #E8F8F8; }
+textarea::placeholder, input::placeholder { color: #3D6060; }
+input:focus, textarea:focus { border-color: #4DD9E8 !important; outline: none; box-shadow: 0 0 0 3px rgba(77,217,232,.1); }
+select { background: #0A1515; color: #E8F8F8; }
+select option { background: #0F1C1C; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #243D3D; border-radius: 4px; }
+@keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
