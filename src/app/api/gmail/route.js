@@ -1,24 +1,21 @@
 import { google } from "googleapis";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../auth/[...nextauth]/route";
 
-export async function GET(req) {
+export async function GET() {
   return Response.json({ messages: [] });
 }
 
 export async function POST(req) {
   try {
-    const session = await getServerSession(authOptions);
-    const { to, subject, body } = await req.json();
+    const { to, subject, body, accessToken } = await req.json();
 
     const oauth2 = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET
     );
-    oauth2.setCredentials({ access_token: session?.accessToken });
+    oauth2.setCredentials({ access_token: accessToken });
 
     const gmail = google.gmail({ version: "v1", auth: oauth2 });
-    const message = [`To: ${to}`, `Subject: ${subject}`, "", body].join("\r\n");
+    const message = [`To: ${to}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "", body].join("\r\n");
     const encoded = Buffer.from(message).toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
 
     await gmail.users.messages.send({
@@ -28,7 +25,7 @@ export async function POST(req) {
 
     return Response.json({ success: true });
   } catch (err) {
-    console.error("Gmail error:", err);
+    console.error("Gmail error:", err.message);
     return Response.json({ error: err.message }, { status: 500 });
   }
 }
